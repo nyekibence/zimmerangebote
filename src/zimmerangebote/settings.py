@@ -20,6 +20,9 @@ DEPARTURE_SCHEME = "//div[@class=\"abm-calendar-day\" and @data-month=\"{month}\
                    "@data-year=\"{year}\" and @data-day=\"{day}\" and " \
                    "contains(@data-original-title, 'Abreisedatum')]"
 
+# XPATH expression to identify the continuation button
+STEPNEXT_BUTTON = "//button[@onclick=\"AjaxSetRequestNextStep\"]"
+
 # Names of useful attributes in a calendar
 DAY_ATTRIB = "data-day"
 MONTH_ATTRIB = "data-month"

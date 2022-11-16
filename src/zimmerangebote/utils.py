@@ -2,6 +2,7 @@
 
 """A module for useful general functions."""
 
+import logging
 from datetime import date
 from itertools import islice, tee
 from typing import Iterable, Optional, Tuple
@@ -21,6 +22,9 @@ def get_ngrams(
         elements: The elements to iterate over.
         ngram_length: The ngram length (e. g. 2 means bigrams).
         step: Optional. The step size between the ngrams.
+
+    Returns:
+        An iterable of ngrams.
     """
     return zip(*(islice(it, i, step) for i, it in enumerate(tee(elements, ngram_length))))
 
@@ -79,3 +83,25 @@ def fill_scheme_string(
                                f"with scheme `{scheme}`")
             scheme = scheme.replace(date_mark, str(date_element))
     return scheme
+
+
+def get_custom_logger(name: str, file_path: Optional[str] = None) -> logging.Logger:
+    """Create a custom logger object.
+
+    Args:
+        name: The logger name.
+        file_path: Optional. Path to a file where the logs will be written.
+            If not specified `stdout` will be used.
+
+    Returns:
+        The logger instance.
+    """
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.DEBUG)
+    handler = logging.FileHandler(file_path, mode="w", encoding="utf-8") \
+        if file_path is not None else logging.StreamHandler()
+    handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter("%(levelname)s:%(message)s",)
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    return logger
