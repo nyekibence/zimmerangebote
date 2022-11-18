@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from itertools import islice, tee
 from typing import Iterable, Optional, Tuple, Dict, Union
 
+from pandas import DataFrame
+
 
 def get_ngrams(
         elements: Iterable,
@@ -140,3 +142,10 @@ class Room:
         data_dict = self.__dict__.copy()
         data_dict["datum"] = self.datum.strftime("%Y/%m/%d")
         return data_dict
+
+@dataclass
+class ThreadResultHolder:
+    """A mutable dataclass to store the value of a thread execution."""
+    df: Optional[DataFrame] = field(
+        default=None, metadata={"help": "A pandas dataframe with room information."}
+    )

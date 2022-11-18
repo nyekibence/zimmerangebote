@@ -4,7 +4,7 @@
 import re
 from logging import Logger
 from datetime import date
-from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 from typing import List, Tuple, Iterable, Union, Optional, Mapping, Sequence
 
 import pandas as pd
@@ -18,6 +18,7 @@ from selenium.webdriver.remote.webelement import WebElement
 from zimmerangebote import settings
 from zimmerangebote.utils import (
     Room,
+    ThreadResultHolder,
     get_custom_logger,
     get_ngrams,
     shift_date_by_months,
@@ -218,7 +219,7 @@ def create_room_table(records: Sequence[Mapping[str, Union[str, int, bool]]]) ->
 def scrape_room_data(
         browser: webdriver.Chrome,
         month_shift: int,
-        target_file: str,
+        target: ThreadResultHolder,
 ) -> None:
     """Scrape the data describing available rooms in a specific month.
 
@@ -226,11 +227,11 @@ def scrape_room_data(
         browser: An initialized Chrome browser.
         month_shift: Specifies how many months to move forward from the
             current month to get the target time interval.
-        target_file: Path to a file where a CSV table will be written.
+        target: A mutable dataclass with a `df` attribute. The result of
+            this function will be assigned to it.
     """
     assert 1 <= month_shift, f"month_shift must be a positive integer, got {month_shift}"
-    assert Path(target_file).parent.exists(), f"Invalid path: {target_file}"
-    logger = get_custom_logger(f"{__name__}-{month_shift}")
+    logger = get_custom_logger(f"{__name__}-in{month_shift}months")
 
     browser.get(settings.BASE_URL)
     logger.debug(f"URL {settings.BASE_URL} opened.")
@@ -276,16 +277,32 @@ def scrape_room_data(
     logger.debug("Loading offers...")
     browser.execute_script(settings.STEPNEXT_FUNC)
     room_elements = select_elements(browser, settings.ROOM_XPATH)
+    logger.debug(f"Number of room elements: {len(room_elements)}")
     room_df = create_room_table(
         [collect_room_properties(room_element, month_shift).to_dict() for room_element in room_elements]
     )
-    room_df.to_csv(target_file, index=False)
+    target.df = room_df
 
 def main() -> None:
     """Main function"""
-    browser = configure_driver()
-    scrape_room_data(browser, 6, target_file="proba.csv")
-    browser.quit()
+    browsers = (configure_driver(), configure_driver())
+    month_shifts = (1, 6)
+    short_term, early = ThreadResultHolder(), ThreadResultHolder()
+
+    with ThreadPoolExecutor(max_workers=settings.MAX_WORKERS) as executor:
+        executor.map(scrape_room_data, browsers, month_shifts, [short_term, early])
+    [browser.quit() for browser in browsers]
+
+    if short_term.df is None and early.df is not None:
+        table = early.df
+    elif short_term.df is not None and early.df is None:
+        table = short_term.df
+    elif short_term.df is not None and early.df is not None:
+        table = pd.concat((short_term.df, early.df), ignore_index=True)
+    else:
+        print("No rooms found :(")
+        return
+    print(table.to_csv(index=False))
 
 
 if __name__ == "__main__":

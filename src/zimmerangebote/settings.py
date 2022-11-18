@@ -56,3 +56,6 @@ EARLY_BOOKING_MAP = MappingProxyType({
     False: "Kurzfristig",
     True: "Frühbuchung"
 })
+
+# Maximal number of workers for threading
+MAX_WORKERS = 2
