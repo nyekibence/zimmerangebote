@@ -1,25 +1,29 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+import re
 from logging import Logger
-from typing import List, Tuple, Iterable, Union, Optional
 from datetime import date
+from pathlib import Path
+from typing import List, Tuple, Iterable, Union, Optional, Mapping, Sequence
 
+import pandas as pd
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.wait import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.remote.webelement import WebElement
-from selenium.webdriver import ActionChains
 
 from zimmerangebote import settings
 from zimmerangebote.utils import (
+    Room,
     get_custom_logger,
     get_ngrams,
     shift_date_by_months,
     fill_scheme_string
 )
+
 
 def configure_driver() -> webdriver.Chrome:
     """Configure the Chrome driver for selenium."""
@@ -32,7 +36,6 @@ def configure_driver() -> webdriver.Chrome:
 def find_and_click(
         driver: webdriver.Chrome,
         xpath_expr: str,
-        action_chain: Optional[ActionChains] = None,
         wait_secs: int = 10
 ) -> WebElement:
     """Find an element and click on it.
@@ -40,8 +43,6 @@ def find_and_click(
     Args:
         driver: The currently used Chrome driver.
         xpath_expr: An XPATH expression to identify the element.
-        action_chain: Optional. An `ActionChain` object to perform actions on the page.
-            If unspecified, the driver will be called directly.
         wait_secs: Specifies how long to wait to find the clickable
             element in seconds. Default: `10`.
 
@@ -51,10 +52,7 @@ def find_and_click(
     element = WebDriverWait(driver, wait_secs).until(
         EC.presence_of_element_located((By.XPATH, xpath_expr))
     )
-    if action_chain is not None:
-        action_chain.move_to_element(element).click().perform()
-    else:
-        driver.execute_script("arguments[0].click();", element)
+    driver.execute_script("arguments[0].click();", element)
     return element
 
 
@@ -119,7 +117,6 @@ def click_stay_dates(
         driver: webdriver.Chrome, *,
         arrival: WebElement,
         departure: date,
-        action_chain: Optional[ActionChains] = None,
         wait_secs: int = 10,
         logger: Optional[Logger] = None
 ) -> WebElement:
@@ -130,8 +127,6 @@ def click_stay_dates(
         driver: The currently used Chrome driver.
         arrival: The arrival date element.
         departure: The departure date as a `date` object.
-        action_chain: Optional. An `ActionChain` object to perform actions on the page.
-            If unspecified, the driver will be called directly.
         wait_secs: Specifies how long to wait to find the
             departure element in seconds. Default: `10`.
         logger: Optional. A logger that will write debug messages.
@@ -156,40 +151,106 @@ def click_stay_dates(
         logger.debug(f"Departure element found: "
                      f"{departure_element.get_attribute('data-original-title')}")
 
-    if action_chain is not None:
-        action_chain.move_to_element(departure_element).click().perform()
-    else:
-        driver.execute_script("arguments[0].click();", departure_element)
+    driver.execute_script("arguments[0].click();", departure_element)
     if logger is not None:
         logger.debug("Departure clicked.")
 
     return departure_element
 
 
-def main() -> None:
-    """Main function"""
-    logger = get_custom_logger(__name__)
-    browser = configure_driver()
-    action_chain = ActionChains(browser)
+def collect_room_properties(
+        room_element: WebElement,
+        n_months: int,
+        num_regex: re.Pattern = re.compile("\d+"),
+) -> Room:
+    """Collect the properties of a room:
+    category, size, price, booking period (early or not).
+    Request date will be filled added automatically.
+
+    Args:
+        room_element: A web element whose children contain all the
+            necessary information about the room.
+        n_months: The number of month between the current date and the
+            arrival date. If it is at least 6 month, the booking will
+            be considered early.
+        num_regex: A regex to identify numbers in the room price and
+            size strings. Default: `'\d+'`.
+
+    Returns:
+        The room data as a `Room` object.
+    """
+    is_early = 6 <= n_months
+    category = room_element.find_element(By.XPATH, settings.ROOM_CAT_XPATH).text
+    size = room_element.find_element(By.XPATH, settings.ROOM_SIZE_XPATH).text
+    price = room_element.find_element(By.XPATH, settings.ROOM_PRICE_XPATH).text
+
+    size = int(num_regex.search(size).group())
+    price = int(num_regex.search(price).group())
+    return Room(
+        category=category,
+        size=size,
+        price=price,
+        is_early_booking=is_early
+    )
+
+
+def create_room_table(records: Sequence[Mapping[str, Union[str, int, bool]]]) -> pd.DataFrame:
+    """Create and rearrange a table from the room records provided as mappings."""
+    room_df: pd.DataFrame = pd.DataFrame.from_records(records)
+
+    # Sort values by price. Get the cheapest for each `(category, size) group.`
+    room_df = room_df.sort_values("price").groupby(["category", "size"]).first().reset_index()
+
+    # Reorder the columns if necessary so that `date` be the first column
+    cols = room_df.columns.tolist()
+    datum_index = cols.index("datum")
+    if datum_index != 0:
+        del cols[datum_index]
+        cols.insert(0, "datum")
+        room_df = room_df[cols]
+
+    # Replace column names and `is_early_booking` column values with German words
+    room_df["is_early_booking"] = room_df["is_early_booking"].map(settings.EARLY_BOOKING_MAP)
+    room_df = room_df.rename(columns=settings.COL_NAME_MAP)
+    return room_df
+
+
+def scrape_room_data(
+        browser: webdriver.Chrome,
+        month_shift: int,
+        target_file: str,
+) -> None:
+    """Scrape the data describing available rooms in a specific month.
+
+    Args:
+        browser: An initialized Chrome browser.
+        month_shift: Specifies how many months to move forward from the
+            current month to get the target time interval.
+        target_file: Path to a file where a CSV table will be written.
+    """
+    assert 1 <= month_shift, f"month_shift must be a positive integer, got {month_shift}"
+    assert Path(target_file).parent.exists(), f"Invalid path: {target_file}"
+    logger = get_custom_logger(f"{__name__}-{month_shift}")
+
     browser.get(settings.BASE_URL)
     logger.debug(f"URL {settings.BASE_URL} opened.")
 
-    target_date = shift_date_by_months(6)
-    find_and_click(
-        driver=browser,
-        action_chain=action_chain,
-        xpath_expr=settings.MONTH_SELECTOR
-    )
-    logger.debug(f"Month menu opened.")
-    find_and_click(
-        driver=browser,
-        xpath_expr=fill_scheme_string(
-            scheme=settings.AJAX_MONTH_SCHEME,
-            year=target_date.year,
-            month=target_date.month
+    target_date = shift_date_by_months(month_shift)
+    if 2 < month_shift:
+        find_and_click(
+            driver=browser,
+            xpath_expr=settings.MONTH_SELECTOR
         )
-    )
-    logger.debug(f"Month ({target_date.month}, {target_date.year}) selected.")
+        logger.debug(f"Month menu opened.")
+        find_and_click(
+            driver=browser,
+            xpath_expr=fill_scheme_string(
+                scheme=settings.AJAX_MONTH_SCHEME,
+                year=target_date.year,
+                month=target_date.month
+            )
+        )
+        logger.debug(f"Month ({target_date.month}, {target_date.year}) selected.")
 
     days_xpath = fill_scheme_string(
         scheme=settings.CALENDAR_DAY_SCHEME,
@@ -198,21 +259,32 @@ def main() -> None:
     )
     days = select_elements(browser, days_xpath)
     stay = select_stay(days)
-    if stay is not None:
-        arrival, departure = stay
-        arrival_month = arrival.get_attribute(settings.MONTH_ATTRIB)
-        arrival_day = arrival.get_attribute(settings.DAY_ATTRIB)
-        logger.debug(f"Dates {arrival_day}.{arrival_month} and "
-                     f"{departure.day}.{departure.month} selected")
-        click_stay_dates(
-            browser,
-            arrival=arrival,
-            departure=departure,
-            logger=logger
-        )
-    else:
+    if stay is None:
         logger.info("No matching date found.")
-    find_and_click(browser, settings.STEPNEXT_BUTTON)
+        return
+    arrival, departure = stay
+    arrival_month = arrival.get_attribute(settings.MONTH_ATTRIB)
+    arrival_day = arrival.get_attribute(settings.DAY_ATTRIB)
+    logger.debug(f"Dates {arrival_day}.{arrival_month} and "
+                 f"{departure.day}.{departure.month} selected.")
+    click_stay_dates(
+        browser,
+        arrival=arrival,
+        departure=departure,
+        logger=logger
+    )
+    logger.debug("Loading offers...")
+    browser.execute_script(settings.STEPNEXT_FUNC)
+    room_elements = select_elements(browser, settings.ROOM_XPATH)
+    room_df = create_room_table(
+        [collect_room_properties(room_element, month_shift).to_dict() for room_element in room_elements]
+    )
+    room_df.to_csv(target_file, index=False)
+
+def main() -> None:
+    """Main function"""
+    browser = configure_driver()
+    scrape_room_data(browser, 6, target_file="proba.csv")
     browser.quit()
 
 

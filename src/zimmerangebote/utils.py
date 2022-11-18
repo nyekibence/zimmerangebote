@@ -3,11 +3,11 @@
 """A module for useful general functions."""
 
 import logging
-from datetime import date
-from itertools import islice, tee
-from typing import Iterable, Optional, Tuple
-
+from datetime import date, datetime
 from dateutil.relativedelta import relativedelta
+from dataclasses import dataclass, field
+from itertools import islice, tee
+from typing import Iterable, Optional, Tuple, Dict, Union
 
 
 def get_ngrams(
@@ -101,7 +101,42 @@ def get_custom_logger(name: str, file_path: Optional[str] = None) -> logging.Log
     handler = logging.FileHandler(file_path, mode="w", encoding="utf-8") \
         if file_path is not None else logging.StreamHandler()
     handler.setLevel(logging.DEBUG)
-    formatter = logging.Formatter("%(levelname)s:%(message)s",)
+    formatter = logging.Formatter("%(name)s:%(levelname)s:%(message)s",)
     handler.setFormatter(formatter)
     logger.addHandler(handler)
     return logger
+
+
+@dataclass(frozen=True)
+class Room:
+    """A dataclass for storing room properties."""
+    category: str = field(metadata={"help": "The room category."})
+    size: int = field(metadata={"help": "The room size."})
+    price: int = field(metadata={"help": "The room price."})
+    is_early_booking: bool = field(
+        metadata={
+            "help": "Specifies if it is an early booking "
+                    "(>= 6 months between booking and arrival months)"
+        }
+    )
+    datum: date = field(
+        default_factory=datetime.today,
+        metadata={
+            "help": "The date when the data was requested. Defaults to today."
+        }
+    )
+
+    def __post_init__(self) -> None:
+        """Check attribute values."""
+        if len(self.category) == 0:
+            raise ValueError("Room category cannot be the empty string.")
+        if self.size <= 0:
+            raise ValueError(f"Room size must be positive, specified {self.size}")
+        if self.price < 0:
+            raise ValueError(f"Price size must be non-negative, specified {self.price}")
+
+    def to_dict(self) -> Dict[str, Union[str, int, bool]]:
+        """Return the data in a `dict`. The date will be converted to a string."""
+        data_dict = self.__dict__.copy()
+        data_dict["datum"] = self.datum.strftime("%Y/%m/%d")
+        return data_dict

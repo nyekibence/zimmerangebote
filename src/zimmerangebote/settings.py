@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 
+from types import MappingProxyType
+
 """A settings file that contains constants for scraping a dynamic website."""
 
 # The base URL
@@ -20,9 +22,6 @@ DEPARTURE_SCHEME = "//div[@class=\"abm-calendar-day\" and @data-month=\"{month}\
                    "@data-year=\"{year}\" and @data-day=\"{day}\" and " \
                    "contains(@data-original-title, 'Abreisedatum')]"
 
-# XPATH expression to identify the continuation button
-STEPNEXT_BUTTON = "//button[@onclick=\"AjaxSetRequestNextStep\"]"
-
 # Names of useful attributes in a calendar
 DAY_ATTRIB = "data-day"
 MONTH_ATTRIB = "data-month"
@@ -30,3 +29,30 @@ YEAR_ATTRIB = "data-year"
 
 # A substring in the `class` attribute value of a date element that indicates that the day is available
 STATE_AVAILABLE = "state-aa"
+
+# Script to execute click on the continuation button
+STEPNEXT_FUNC = "AjaxSetRequestStepNext();"
+
+# XPATH expression to identify a room element
+ROOM_XPATH = "//div[contains(@class, 'row abm-room') and " \
+             "@data-roomid and @data-requestid]"
+
+# XPATH expressions to look up room category, size and price
+ROOM_CAT_XPATH = ".//div/h4[@class=\"abm-headline\"]"
+ROOM_SIZE_XPATH = ".//p/span[@class=\"h4\"]"
+ROOM_PRICE_XPATH = ".//p[@class and @onclick]/span[@class=\"h2\"]"
+
+# Column names in the output table mapped to the data fields of a `zimmerangebote.utils.Room` object
+COL_NAME_MAP = MappingProxyType({
+    "datum": "Datum",
+    "category": "Kategorie",
+    "price": "Preis",
+    "size": "Zimmergröße (m\u00b2)",
+    "is_early_booking": "Buchungszeitraum"
+})
+
+# Readable strings indicating whether a booking is early
+EARLY_BOOKING_MAP = MappingProxyType({
+    False: "Kurzfristig",
+    True: "Frühbuchung"
+})
